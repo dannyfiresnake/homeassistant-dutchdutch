@@ -12,6 +12,7 @@ exercised standalone.
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import logging
 import uuid
@@ -36,6 +37,14 @@ XLR_MODES = ("aes", "analogLowGain", "analogHighGain")
 # "XLR" in selectedInput. Normalize to "XLR" everywhere (same workaround as
 # the reference implementation).
 _INPUT_ALIASES = {"AES Streamer": "XLR"}
+
+
+def _is_ip(value: str) -> bool:
+    try:
+        ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return True
 
 
 class DutchDutchError(Exception):
@@ -218,6 +227,10 @@ class DutchDutchClient:
     ) -> None:
         self.host = host
         self.port = port
+        # The host we actually connect to. Writes handled by the Network
+        # Plugin (input, sleep, ...) only succeed on the network master, so
+        # after connecting we resolve the master and follow it if needed.
+        self._connect_host = host
         self._session = session
         self._owns_session = session is None
         self._ws: aiohttp.ClientWebSocketResponse | None = None
@@ -226,6 +239,7 @@ class DutchDutchClient:
         self._listeners: list[Callable[[], None]] = []
         self._closed = True
         self._connected = False
+        self._redirecting = False
         self._ready: asyncio.Event = asyncio.Event()
         self.rooms: dict[str, DutchDutchRoom] = {}
 
@@ -234,8 +248,13 @@ class DutchDutchClient:
         return self._connected
 
     @property
+    def active_host(self) -> str:
+        """The host currently connected to (the network master once resolved)."""
+        return self._connect_host
+
+    @property
     def _url(self) -> str:
-        host = f"[{self.host}]" if ":" in self.host else self.host
+        host = f"[{self._connect_host}]" if ":" in self._connect_host else self._connect_host
         return f"ws://{host}:{self.port}"
 
     def add_listener(self, listener: Callable[[], None]) -> Callable[[], None]:
@@ -299,6 +318,9 @@ class DutchDutchClient:
                     ws = await self._session.ws_connect(self._url, heartbeat=25.0)
             except (aiohttp.ClientError, OSError, TimeoutError) as err:
                 _LOGGER.debug("Connection to %s failed: %s", self._url, err)
+                # If following the master failed, fall back to the configured
+                # host so the master can be re-resolved.
+                self._connect_host = self.host
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, RECONNECT_MAX)
                 continue
@@ -328,12 +350,41 @@ class DutchDutchClient:
                         _LOGGER.warning("Lost connection to Dutch & Dutch at %s", self.host)
                     self._notify()
 
+            if self._redirecting:
+                # Reconnect to the resolved master immediately.
+                self._redirecting = False
+                continue
             if not self._closed:
                 await asyncio.sleep(RECONNECT_MIN)
 
     async def _initialize(self) -> None:
         """Fetch initial state and subscribe to updates on a fresh connection."""
         try:
+            # Identify ourselves like the official app does.
+            await self._send(
+                {
+                    "meta": {
+                        "id": str(uuid.uuid4()),
+                        "endpoint": "yoctopus:label",
+                        "method": "update",
+                    },
+                    "data": "Home Assistant",
+                }
+            )
+            # Room writes handled by the Network Plugin only succeed on the
+            # network master; if we landed on another member, follow it.
+            master_host = await self._get_master_host()
+            if master_host is not None and master_host != self._connect_host:
+                _LOGGER.debug(
+                    "%s is not the network master, following master at %s",
+                    self._connect_host,
+                    master_host,
+                )
+                self._connect_host = master_host
+                self._redirecting = True
+                if self._ws is not None:
+                    await self._ws.close()
+                return
             response = await self._request("network", "read")
             state = (response.get("data") or {}).get("state")
             if isinstance(state, dict):
@@ -350,6 +401,21 @@ class DutchDutchClient:
         self._ready.set()
         _LOGGER.debug("Connected to Dutch & Dutch at %s, rooms: %s", self.host, list(self.rooms))
         self._notify()
+
+    async def _get_master_host(self) -> str | None:
+        """Return the network master's address, or None if it can't be determined."""
+        try:
+            response = await self._request("master", "read")
+        except DutchDutchError as err:
+            _LOGGER.debug("Could not read network master from %s: %s", self.host, err)
+            return None
+        address = (response.get("data") or {}).get("address") or {}
+        candidates = list(address.get("ipv4") or []) + list(address.get("ipv6") or [])
+        ips = [c for c in candidates if _is_ip(str(c))]
+        if ips:
+            return str(ips[0])
+        hostname = address.get("hostname")
+        return str(hostname) if hostname else None
 
     def _abort_pending(self) -> None:
         for fut in self._pending.values():
@@ -387,7 +453,7 @@ class DutchDutchClient:
             data = entry.get("data") if isinstance(entry, dict) else None
             if not isinstance(data, dict) or data.get("type") != "room":
                 continue
-            room = parse_room(data, self.host)
+            room = parse_room(data, self._connect_host)
             if room is None:
                 continue
             if self.rooms.get(room.room_id) != room:

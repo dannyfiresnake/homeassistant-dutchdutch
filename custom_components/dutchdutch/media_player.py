@@ -80,7 +80,7 @@ class DutchDutchMediaPlayer(DutchDutchEntity, MediaPlayerEntity):
         if room is None:
             return MediaPlayerState.OFF
         if room.sleep:
-            return MediaPlayerState.STANDBY
+            return MediaPlayerState.OFF
         if room.streaming is not None:
             if room.streaming.is_playing:
                 return MediaPlayerState.PLAYING

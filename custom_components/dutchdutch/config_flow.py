@@ -21,12 +21,15 @@ _LOGGER = logging.getLogger(__name__)
 USER_SCHEMA = vol.Schema({vol.Required(CONF_HOST): str})
 
 
-async def _get_room(hass: HomeAssistant, host: str) -> DutchDutchRoom:
-    """Connect to a speaker and return its room. Raises CannotConnect."""
+async def _get_room(hass: HomeAssistant, host: str) -> tuple[DutchDutchRoom, str]:
+    """Connect to a speaker and return its room and the resolved master host.
+
+    Raises CannotConnect.
+    """
     client = DutchDutchClient(host, DEFAULT_PORT, async_get_clientsession(hass))
     try:
         await client.async_connect()
-        return next(iter(client.rooms.values()))
+        return next(iter(client.rooms.values())), client.active_host
     finally:
         await client.async_disconnect()
 
@@ -48,7 +51,7 @@ class DutchDutchConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             host = user_input[CONF_HOST]
             try:
-                room = await _get_room(self.hass, host)
+                room, master_host = await _get_room(self.hass, host)
             except CannotConnect:
                 errors["base"] = "cannot_connect"
             except Exception:  # noqa: BLE001
@@ -56,9 +59,9 @@ class DutchDutchConfigFlow(ConfigFlow, domain=DOMAIN):
                 errors["base"] = "unknown"
             else:
                 await self.async_set_unique_id(room.room_id)
-                self._abort_if_unique_id_configured(updates={CONF_HOST: host})
+                self._abort_if_unique_id_configured(updates={CONF_HOST: master_host})
                 return self.async_create_entry(
-                    title=room.name, data={CONF_HOST: host}
+                    title=room.name, data={CONF_HOST: master_host}
                 )
 
         return self.async_show_form(
@@ -70,15 +73,21 @@ class DutchDutchConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         """Handle a speaker discovered via mDNS (_x-clerk._tcp)."""
         host = discovery_info.host
+        # Both speakers of a pair advertise; don't reconnect to hosts that are
+        # already part of a configured entry on every mDNS re-announcement.
+        for entry in self._async_current_entries(include_ignore=True):
+            if entry.data.get(CONF_HOST) == host:
+                return self.async_abort(reason="already_configured")
+
         try:
-            room = await _get_room(self.hass, host)
+            room, master_host = await _get_room(self.hass, host)
         except CannotConnect:
             return self.async_abort(reason="cannot_connect")
 
         await self.async_set_unique_id(room.room_id)
-        self._abort_if_unique_id_configured(updates={CONF_HOST: host})
+        self._abort_if_unique_id_configured(updates={CONF_HOST: master_host})
 
-        self._host = host
+        self._host = master_host
         self._name = room.name
         self.context["title_placeholders"] = {"name": room.name}
         return await self.async_step_zeroconf_confirm()
