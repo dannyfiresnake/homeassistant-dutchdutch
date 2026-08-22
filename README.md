@@ -30,7 +30,7 @@ creates one device per room (deduplicated by room ID).
 
 ## Protocol
 
-Based on the [dutchdutch-ascend](https://github.com/ishiboo/dutchdutch-ascend)
+Based on the [dutchdutch-ascend](https://github.com/dannyfiresnake/dutchdutch-ascend)
 Rust implementation: JSON request/response over WebSocket (`ws://<speaker>:8768`),
 `network` read/subscribe for state, `gain2`/`mute`/`sleep`/`selectedInput`/
 `selectedXLR`/`linear-phase`/`tone-control`/`preset2`/`streaming-api` endpoints
