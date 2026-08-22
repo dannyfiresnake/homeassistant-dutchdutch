@@ -1,0 +1,45 @@
+{
+  "config": {
+    "flow_title": "{name}",
+    "step": {
+      "user": {
+        "description": "Enter the IP address or hostname of a Dutch & Dutch speaker.",
+        "data": {
+          "host": "Host"
+        }
+      },
+      "zeroconf_confirm": {
+        "title": "Add Dutch & Dutch room",
+        "description": "Do you want to add the room {name} ({host}) to Home Assistant?"
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect",
+      "unknown": "Unexpected error"
+    },
+    "abort": {
+      "already_configured": "Device is already configured",
+      "cannot_connect": "Failed to connect"
+    }
+  },
+  "entity": {
+    "select": {
+      "xlr_mode": {
+        "name": "XLR mode",
+        "state": {
+          "aes": "AES digital",
+          "analogLowGain": "Analog (low gain)",
+          "analogHighGain": "Analog (high gain)"
+        }
+      },
+      "preset": {
+        "name": "Preset"
+      }
+    },
+    "switch": {
+      "linear_phase": {
+        "name": "Linear phase"
+      }
+    }
+  }
+}
