@@ -21,11 +21,36 @@ async def async_setup_entry(
     client = entry.runtime_data
     entities: list[SelectEntity] = []
     for room_id, room in client.rooms.items():
+        if room.input_modes:
+            entities.append(DutchDutchInputSelect(client, room_id))
         if room.xlr_modes:
             entities.append(DutchDutchXlrModeSelect(client, room_id))
         if room.presets:
             entities.append(DutchDutchPresetSelect(client, room_id))
     async_add_entities(entities)
+
+
+class DutchDutchInputSelect(DutchDutchEntity, SelectEntity):
+    """Selects the active input source (mirrors the media player source)."""
+
+    _attr_translation_key = "input"
+
+    def __init__(self, client: DutchDutchClient, room_id: str) -> None:
+        super().__init__(client, room_id)
+        self._attr_unique_id = f"{room_id}-input"
+
+    @property
+    def options(self) -> list[str]:
+        room = self.room
+        return room.input_modes if room else []
+
+    @property
+    def current_option(self) -> str | None:
+        room = self.room
+        return room.selected_input if room else None
+
+    async def async_select_option(self, option: str) -> None:
+        await self._client.async_set_input(self._room_id, option)
 
 
 class DutchDutchXlrModeSelect(DutchDutchEntity, SelectEntity):

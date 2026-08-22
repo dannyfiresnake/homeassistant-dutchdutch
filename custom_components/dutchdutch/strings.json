@@ -24,6 +24,9 @@
   },
   "entity": {
     "select": {
+      "input": {
+        "name": "Input"
+      },
       "xlr_mode": {
         "name": "XLR mode",
         "state": {

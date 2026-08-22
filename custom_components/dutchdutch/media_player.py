@@ -31,6 +31,10 @@ BASE_FEATURES = (
 # dB per volume_up/volume_down press.
 VOLUME_STEP_DB = 1.0
 
+# Physical (non-streaming) inputs: the room plays whatever the wire feeds it,
+# so "idle" would be misleading — report "on" instead.
+NON_STREAMING_INPUTS = {"XLR"}
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -82,6 +86,8 @@ class DutchDutchMediaPlayer(DutchDutchEntity, MediaPlayerEntity):
                 return MediaPlayerState.PLAYING
             if room.streaming.display:
                 return MediaPlayerState.PAUSED
+        if room.selected_input in NON_STREAMING_INPUTS:
+            return MediaPlayerState.ON
         return MediaPlayerState.IDLE
 
     # ---------- Volume ----------
